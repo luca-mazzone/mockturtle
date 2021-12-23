@@ -1,33 +1,33 @@
 /* mockturtle: C++ logic network library
- * Copyright (C) 2018-2021  EPFL
- *
- * Permission is hereby granted, free of charge, to any person
- * obtaining a copy of this software and associated documentation
- * files (the "Software"), to deal in the Software without
- * restriction, including without limitation the rights to use,
- * copy, modify, merge, publish, distribute, sublicense, and/or sell
- * copies of the Software, and to permit persons to whom the
- * Software is furnished to do so, subject to the following
- * conditions:
- *
- * The above copyright notice and this permission notice shall be
- * included in all copies or substantial portions of the Software.
- *
- * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
- * EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES
- * OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND
- * NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT
- * HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY,
- * WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
- * FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR
- * OTHER DEALINGS IN THE SOFTWARE.
+* Copyright (C) 2018-2021  EPFL
+*
+* Permission is hereby granted, free of charge, to any person
+* obtaining a copy of this software and associated documentation
+* files (the "Software"), to deal in the Software without
+* restriction, including without limitation the rights to use,
+* copy, modify, merge, publish, distribute, sublicense, and/or sell
+* copies of the Software, and to permit persons to whom the
+* Software is furnished to do so, subject to the following
+* conditions:
+*
+* The above copyright notice and this permission notice shall be
+* included in all copies or substantial portions of the Software.
+*
+* THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
+* EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES
+* OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND
+* NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT
+* HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY,
+* WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
+* FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR
+* OTHER DEALINGS IN THE SOFTWARE.
  */
 
 /*!
-  \file simulation_cec.hpp
-  \brief Simulation-based CEC
+ \file simulation_cec.hpp
+ \brief Simulation-based CEC
 
-  EPFL CS-472 2021 Final Project Option 2
+ EPFL CS-472 2021 Final Project Option 2
 */
 
 #pragma once
@@ -39,7 +39,6 @@
 #include "../utils/node_map.hpp"
 #include "miter.hpp"
 #include "simulation.hpp"
-
 namespace mockturtle
 {
 
@@ -49,12 +48,54 @@ struct simulation_cec_stats
   /*! \brief Split variable (simulation size). */
   uint32_t split_var{ 0 };
 
-  /*! \brief Number of simulation rounds. */
+  /*! \brief Number of simulation round. */
   uint32_t rounds{ 0 };
 };
 
 namespace detail
 {
+
+class checker_LUCA {
+public:
+  unsigned int numb_v;
+  unsigned int split_v;
+  unsigned int round;
+
+  checker_LUCA( unsigned int numb_v, unsigned int split_v, unsigned int round )
+      : numb_v( numb_v ), split_v(split_v), round( round ) {}
+
+  kitty::dynamic_truth_table compute_constant( bool value ) const
+  {
+    kitty::dynamic_truth_table tt( split_v );
+    return value ? ~tt : tt;
+  }
+
+  kitty::dynamic_truth_table compute_pi( uint32_t indice ) const
+  {
+    kitty::dynamic_truth_table tt(split_v);
+    if(indice < split_v)
+    {
+      kitty::create_nth_var(tt, indice);
+    }
+    else
+    {
+      bool shifting = (round >> (indice-split_v)) & 1;
+      if (!shifting)
+      {
+        tt = ~tt;
+      }
+    }
+    return tt;
+  }
+
+  kitty::dynamic_truth_table compute_not( kitty::dynamic_truth_table const& value ) const
+  {
+    return ~value;
+  }
+
+private:
+
+};
 
 template<class Ntk>
 class simulation_cec_impl
@@ -73,12 +114,42 @@ public:
 
   bool run()
   {
-    /* TODO: write your implementation here */
-    return false;
+    bool result = false;
+    uint64_t  k = _ntk.num_pis();
+    if (k <= 6)
+      _st.split_var = k;
+    else {
+      uint64_t luca,L;
+      L = _ntk.size();
+      luca = 7;
+      while (luca < k && (32 + pow(2,(luca-3 + 1 ))) * L <= pow(2, 29))
+      {
+        luca++;
+      }
+      _st.split_var = luca;
+    }
+
+    _st.rounds = pow(2,k - _st.split_var);
+
+    result = sim();
+    return result;
   }
 
 private:
-  /* you can add additional methods here */
+
+  bool sim() {
+    // Define the truthtable that we have
+    for(int round = 0; round < _st.rounds; round++){
+      checker_LUCA customSimulator(_ntk.num_pis(), _st.split_var, round);
+      const std::vector<kitty::dynamic_truth_table> tts = simulate<kitty::dynamic_truth_table>(_ntk,customSimulator );
+      for(auto& po : tts) {
+        if(!kitty::is_const0(po)){
+          return false;
+        }
+      }
+    }
+    return true;
+  }
 
 private:
   Ntk& _ntk;
@@ -91,12 +162,12 @@ private:
 /* Entry point for users to call */
 
 /*! \brief Simulation-based CEC.
- *
- * This function implements a simulation-based combinational equivalence checker.
- * The implementation creates a miter network and run several rounds of simulation
- * to verify the functional equivalence. For memory and speed reasons this approach
- * is limited up to 40 input networks. It returns an optional which is `nullopt`,
- * if the network has more than 40 inputs.
+*
+* This function implements a simulation-based combinational equivalence checker.
+* The implementation creates a miter network and run several round of simulation
+* to verify the functional equivalence. For memory and speed reasons this approach
+* is limited up to 40 input networks. It returns an optional which is `nullopt`,
+* if the network has more than 40 inputs.
  */
 template<class Ntk>
 std::optional<bool> simulation_cec( Ntk const& ntk1, Ntk const& ntk2, simulation_cec_stats* pst = nullptr )
